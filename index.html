@@ -179,13 +179,7 @@ Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start 
         }
       }
 
-      // Step 2: Blend with original for structure preservation (like obamafy's proximity importance)
-      // Draw original at low opacity over the guac mosaic so faces/shapes stay readable
-      outCtx.globalAlpha = 0.25;
-      outCtx.globalCompositeOperation = "luminosity";
-      outCtx.drawImage(ctx.canvas, 0, 0);
-      outCtx.globalAlpha = 1.0;
-      outCtx.globalCompositeOperation = "source-over";
+      // No blend — we want pure guac pixels, structure comes from cell matching
 
       // Step 3: Posterize to 4 guac colors for the iconic poster look
       const final = outCtx.getImageData(0, 0, w, h);
@@ -200,12 +194,9 @@ Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start 
         // Boost contrast first
         let lum = fd[i]*0.299 + fd[i+1]*0.587 + fd[i+2]*0.114;
         // Floyd-Steinberg dithering: add quantization error to neighbors
-        const band = lum < 55 ? 0 : lum < 115 ? 1 : lum < 185 ? 2 : 3;
+        const band = lum < 64 ? 0 : lum < 128 ? 1 : lum < 192 ? 2 : 3;
         const err = lum - (band === 0 ? 30 : band === 1 ? 85 : band === 2 ? 150 : 215);
-        // Spread error (simplified, horizontal only for speed)
-        if (i+4 < fd.length) {
-          fd[i+4] = Math.max(0, Math.min(255, fd[i+4] + err * 7/16));
-        }
+
         fd[i]   = PALETTE[band][0];
         fd[i+1] = PALETTE[band][1];
         fd[i+2] = PALETTE[band][2];
