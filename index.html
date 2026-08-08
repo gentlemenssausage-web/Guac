@@ -76,41 +76,67 @@ Be absurd, specific, funny. Respond ONLY with raw JSON, start with { end with }:
       return JSON.parse(match[0]);
     }
 
-    // Real guac photos from Wikimedia Commons — picked randomly each time
-    const GUAC_PHOTOS = [
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Guacamole_y_totopos.jpg/640px-Guacamole_y_totopos.jpg",
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Guacamole.jpg/640px-Guacamole.jpg",
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Guacamole_Prepared.jpg/640px-Guacamole_Prepared.jpg",
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Guacamole_0.jpg/640px-Guacamole_0.jpg",
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Guacamole_and_chips.jpg/640px-Guacamole_and_chips.jpg",
-      "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/A_small_cup_of_guacamole.jpg/640px-A_small_cup_of_guacamole.jpg",
-    ];
+    // Cloudflare Worker URL — update this after deploying worker.js
+    const WORKER_URL = "https://guac.gentlemenssausage.workers.dev";
 
     async function loadGuacPhoto(w, h) {
-      // Pick a random guac photo, try next if it fails
-      const shuffled = [...GUAC_PHOTOS].sort(() => Math.random() - 0.5);
-      for (const url of shuffled) {
-        try {
-          const data = await new Promise((resolve, reject) => {
-            const img = new Image();
-            img.crossOrigin = "anonymous";
-            img.onload = () => {
-              const c = document.createElement("canvas");
-              c.width = w; c.height = h;
-              const ctx = c.getContext("2d");
-              // Draw guac photo tiled/scaled to cover source size
-              ctx.drawImage(img, 0, 0, w, h);
-              resolve(ctx.getImageData(0, 0, w, h).data);
-            };
-            img.onerror = reject;
-            img.src = url;
-          });
-          return data;
-        } catch(e) {
-          console.warn("Failed to load guac photo:", url, e);
+      try {
+        // Step 1: Ask worker to search Wikimedia for guac images
+        const searchRes = await fetch(WORKER_URL + "/search");
+        const { urls } = await searchRes.json();
+        if (!urls || urls.length === 0) throw new Error("no urls");
+
+        // Step 2: Pick a random one and proxy it through the worker
+        const picked = urls[Math.floor(Math.random() * urls.length)];
+        const proxyUrl = WORKER_URL + "/proxy?url=" + encodeURIComponent(picked);
+
+        const data = await new Promise((resolve, reject) => {
+          const img = new Image();
+          img.crossOrigin = "anonymous";
+          img.onload = () => {
+            const c = document.createElement("canvas");
+            c.width = w; c.height = h;
+            const ctx = c.getContext("2d");
+            ctx.drawImage(img, 0, 0, w, h);
+            resolve(ctx.getImageData(0, 0, w, h).data);
+          };
+          img.onerror = reject;
+          setTimeout(() => reject(new Error("timeout")), 8000);
+          img.src = proxyUrl;
+        });
+        return data;
+      } catch(e) {
+        console.warn("Worker fetch failed, using procedural fallback:", e.message);
+        return generateProceduralGuac(w, h);
+      }
+    }
+
+    function generateProceduralGuac(w, h) {
+      const d = new Uint8ClampedArray(w * h * 4);
+      const colors = [
+        [20,35,5],[45,65,8],[72,95,15],[95,125,20],
+        [130,165,30],[160,200,40],[185,220,55],[210,235,75],
+        [55,40,10],[80,55,12],[110,80,18],[35,28,6],
+      ];
+      const s1=Math.random()*999, s2=Math.random()*999, s3=Math.random()*999;
+      const f1=0.015+Math.random()*0.02, f2=0.04+Math.random()*0.03, f3=0.08+Math.random()*0.05;
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          const n = Math.sin((x+s1)*f1)*Math.cos((y+s1)*f1)*0.5
+                  + Math.sin((x+s2)*f2+y*0.01)*Math.cos((y+s2)*f2)*0.3
+                  + Math.sin((x+s3)*f3)*Math.sin((y+s3)*f3+x*0.01)*0.2;
+          const t = (n+1)/2;
+          const ci = Math.floor(t*(colors.length-1));
+          const fr = t*(colors.length-1)-ci;
+          const c0=colors[ci], c1=colors[Math.min(ci+1,colors.length-1)];
+          const i=(y*w+x)*4;
+          d[i]=Math.round(c0[0]+(c1[0]-c0[0])*fr);
+          d[i+1]=Math.round(c0[1]+(c1[1]-c0[1])*fr);
+          d[i+2]=Math.round(c0[2]+(c1[2]-c0[2])*fr);
+          d[i+3]=255;
         }
       }
-      throw new Error("All guac photos failed to load");
+      return d;
     }
 
     // THE CORE ALGORITHM
