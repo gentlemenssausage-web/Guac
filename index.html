@@ -76,108 +76,41 @@ Be absurd, specific, funny. Respond ONLY with raw JSON, start with { end with }:
       return JSON.parse(match[0]);
     }
 
-    // Generate a procedural guacamole texture — completely different every time
-    function generateGuacTexture(w, h) {
-      const canvas = document.createElement("canvas");
-      canvas.width = w; canvas.height = h;
-      const ctx = canvas.getContext("2d");
-      const img = ctx.createImageData(w, h);
-      const d = img.data;
+    // Real guac photos from Wikimedia Commons — picked randomly each time
+    const GUAC_PHOTOS = [
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Guacamole_y_totopos.jpg/640px-Guacamole_y_totopos.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/d/db/Guacamole.jpg/640px-Guacamole.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/9/9f/Guacamole_Prepared.jpg/640px-Guacamole_Prepared.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/8/8b/Guacamole_0.jpg/640px-Guacamole_0.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/e/ec/Guacamole_and_chips.jpg/640px-Guacamole_and_chips.jpg",
+      "https://upload.wikimedia.org/wikipedia/commons/thumb/4/45/A_small_cup_of_guacamole.jpg/640px-A_small_cup_of_guacamole.jpg",
+    ];
 
-      // Guac color palette: dark olive to bright lime
-      const guacColors = [
-        [20, 35, 5],   // nearly black olive
-        [45, 65, 8],   // very dark green
-        [72, 95, 15],  // dark avocado
-        [95, 125, 20], // medium avocado
-        [130, 165, 30],// classic guac
-        [160, 200, 40],// bright guac
-        [185, 220, 55],// light guac
-        [210, 235, 75],// lime highlight
-        [55, 40, 10],  // brown pit chunk
-        [80, 55, 12],  // darker brown
-        [110, 80, 18], // medium brown
-        [35, 28, 6],   // very dark brown
-      ];
-
-      // Fill with layered noise — Perlin-like using sin/cos harmonics
-      const seed1 = Math.random() * 1000;
-      const seed2 = Math.random() * 1000;
-      const seed3 = Math.random() * 1000;
-      const freq1 = 0.015 + Math.random() * 0.02;
-      const freq2 = 0.04  + Math.random() * 0.03;
-      const freq3 = 0.08  + Math.random() * 0.05;
-
-      for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-          // Multi-octave noise using trig (no perlin needed)
-          const n =
-            Math.sin((x + seed1) * freq1) * Math.cos((y + seed1) * freq1) * 0.5 +
-            Math.sin((x + seed2) * freq2 + y * 0.01) * Math.cos((y + seed2) * freq2) * 0.3 +
-            Math.sin((x + seed3) * freq3) * Math.sin((y + seed3) * freq3 + x * 0.01) * 0.2;
-
-          // Normalize to 0-1
-          const t = (n + 1) / 2;
-
-          // Map to color index
-          const ci = Math.floor(t * (guacColors.length - 1));
-          const frac = t * (guacColors.length - 1) - ci;
-          const c0 = guacColors[ci];
-          const c1 = guacColors[Math.min(ci + 1, guacColors.length - 1)];
-
-          const i = (y * w + x) * 4;
-          d[i]   = Math.round(c0[0] + (c1[0] - c0[0]) * frac);
-          d[i+1] = Math.round(c0[1] + (c1[1] - c0[1]) * frac);
-          d[i+2] = Math.round(c0[2] + (c1[2] - c0[2]) * frac);
-          d[i+3] = 255;
+    async function loadGuacPhoto(w, h) {
+      // Pick a random guac photo, try next if it fails
+      const shuffled = [...GUAC_PHOTOS].sort(() => Math.random() - 0.5);
+      for (const url of shuffled) {
+        try {
+          const data = await new Promise((resolve, reject) => {
+            const img = new Image();
+            img.crossOrigin = "anonymous";
+            img.onload = () => {
+              const c = document.createElement("canvas");
+              c.width = w; c.height = h;
+              const ctx = c.getContext("2d");
+              // Draw guac photo tiled/scaled to cover source size
+              ctx.drawImage(img, 0, 0, w, h);
+              resolve(ctx.getImageData(0, 0, w, h).data);
+            };
+            img.onerror = reject;
+            img.src = url;
+          });
+          return data;
+        } catch(e) {
+          console.warn("Failed to load guac photo:", url, e);
         }
       }
-
-      // Paint random brown pit blobs
-      const numBlobs = 40 + Math.floor(Math.random() * 60);
-      for (let b = 0; b < numBlobs; b++) {
-        const bx = Math.floor(Math.random() * w);
-        const by = Math.floor(Math.random() * h);
-        const br = 4 + Math.floor(Math.random() * 18);
-        const bColor = guacColors[8 + Math.floor(Math.random() * 4)]; // brown range
-        for (let dy = -br; dy <= br; dy++) {
-          for (let dx = -br; dx <= br; dx++) {
-            if (dx*dx + dy*dy > br*br) continue;
-            const px = bx+dx, py = by+dy;
-            if (px < 0 || px >= w || py < 0 || py >= h) continue;
-            const dist = Math.sqrt(dx*dx+dy*dy) / br;
-            const blend = Math.max(0, 1 - dist * 1.5); // soft edge
-            const i = (py*w+px)*4;
-            d[i]   = Math.round(d[i]   * (1-blend) + bColor[0] * blend);
-            d[i+1] = Math.round(d[i+1] * (1-blend) + bColor[1] * blend);
-            d[i+2] = Math.round(d[i+2] * (1-blend) + bColor[2] * blend);
-          }
-        }
-      }
-
-      // Paint bright lime highlight streaks
-      const numStreaks = 20 + Math.floor(Math.random() * 30);
-      for (let s = 0; s < numStreaks; s++) {
-        const sx = Math.floor(Math.random() * w);
-        const sy = Math.floor(Math.random() * h);
-        const sr = 2 + Math.floor(Math.random() * 8);
-        const sColor = [200 + Math.floor(Math.random()*30), 225 + Math.floor(Math.random()*10), 50 + Math.floor(Math.random()*30)];
-        for (let dy = -sr; dy <= sr; dy++) {
-          for (let dx = -sr; dx <= sr; dx++) {
-            if (dx*dx + dy*dy > sr*sr) continue;
-            const px = sx+dx, py = sy+dy;
-            if (px < 0 || px >= w || py < 0 || py >= h) continue;
-            const blend = 0.5;
-            const i = (py*w+px)*4;
-            d[i]   = Math.round(d[i]   * (1-blend) + sColor[0] * blend);
-            d[i+1] = Math.round(d[i+1] * (1-blend) + sColor[1] * blend);
-            d[i+2] = Math.round(d[i+2] * (1-blend) + sColor[2] * blend);
-          }
-        }
-      }
-
-      ctx.putImageData(img, 0, 0);
-      return d;
+      throw new Error("All guac photos failed to load");
     }
 
     // THE CORE ALGORITHM
@@ -188,14 +121,14 @@ Be absurd, specific, funny. Respond ONLY with raw JSON, start with { end with }:
     // 5. Map source[rank] -> guac[rank] (1:1 luminance match)
     // 6. Place guac pixel back at original source position
     // Result: image structure preserved, every pixel is a real guac pixel
-    function applyGuacPixelRemap(ctx, w, h, setStatus) {
-      setStatus("Generating guac texture...");
+    async function applyGuacPixelRemap(ctx, w, h, setStatus) {
+      setStatus("Fetching real guac photo...");
       const src = ctx.getImageData(0, 0, w, h);
       const sd = src.data;
       const total = w * h;
 
-      // Generate unique guac texture same size as source
-      const guacData = generateGuacTexture(w, h);
+      // Load a real random guac photo as pixel source
+      const guacData = await loadGuacPhoto(w, h);
 
       setStatus("Sorting pixels by luminance...");
 
@@ -272,7 +205,7 @@ Be absurd, specific, funny. Respond ONLY with raw JSON, start with { end with }:
             try { desc = await describeImage(base64, mime); } catch(e) { console.warn("Vision:", e.message); }
 
             // THE REMAP
-            applyGuacPixelRemap(ctx, canvas.width, canvas.height, setStatus);
+            await applyGuacPixelRemap(ctx, canvas.width, canvas.height, setStatus);
             setProcessedSrc(canvas.toDataURL());
 
             // Generate recipe
