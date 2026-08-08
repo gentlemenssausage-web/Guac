@@ -10,7 +10,7 @@
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      font-family: "Segoe UI", sans-serif;
       background: linear-gradient(135deg, #f0f4e8 0%, #e0edd0 100%);
       min-height: 100vh;
       padding: 40px 20px;
@@ -24,9 +24,6 @@
 
     const GROQ_RECIPE_KEY = "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";
     const GROQ_VISION_KEY = "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";
-
-    // Real guac photo from Wikimedia Commons (public domain)
-    const GUAC_IMG_URL = "https://upload.wikimedia.org/wikipedia/commons/thumb/2/29/Guacamole_y_totopos.jpg/640px-Guacamole_y_totopos.jpg";
 
     async function groqPost(apiKey, body) {
       const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
@@ -46,14 +43,14 @@
           role: "user",
           content: [
             { type: "image_url", image_url: { url: "data:" + mime + ";base64," + base64 } },
-            { type: "text", text: "Describe in 2 sentences: what specific objects, colors, and textures are in this image? Be precise." }
+            { type: "text", text: "Describe in 2 sentences exactly what specific objects, colors, and textures are in this image. Be very precise." }
           ]
         }]
       });
       return data.choices[0].message.content.trim();
     }
 
-    async function generateRecipe(imageName, imageDescription) {
+    async function generateRecipe(imageDescription) {
       const prompt = `You are a completely unhinged guacamole recipe writer.
 
 The image contains: ${imageDescription}
@@ -62,16 +59,11 @@ Write a guacamole recipe that treats the SPECIFIC things in this image as guacam
 
 Examples:
 - Dell laptop in a box -> "peel back the white plastic Dell lid to reveal the guac flesh inside the chassis"
-- Cat -> "separate the fur layers to access the purring green interior"
-- Windows settings screen -> "drain the RAM coolant (your lime juice), mash the CPU cores together"
+- Birthday card with old man -> "peel back the birthday man's white beard to reveal the avocado flesh beneath"
+- Windows settings -> "drain the RAM coolant as your lime juice, mash the CPU cores"
 
-Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start with { end with }.
-{
-  "title": "ridiculous title referencing what's actually in the image",
-  "servings": "weird serving size",
-  "steps": ["step referencing specific parts of image", "step 2", "step 3", "step 4", "step 5"],
-  "warning": "⚠️ unhinged warning referencing the image"
-}`;
+Be absurd, specific, funny. Respond ONLY with raw JSON, start with { end with }:
+{"title":"ridiculous title","servings":"weird serving size","steps":["step 1","step 2","step 3","step 4","step 5"],"warning":"⚠️ unhinged warning"}`;
 
       const data = await groqPost(GROQ_RECIPE_KEY, {
         model: "llama-3.3-70b-versatile",
@@ -84,128 +76,162 @@ Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start 
       return JSON.parse(match[0]);
     }
 
-    // Load guac reference image into a canvas, return pixel data
-    async function loadGuacTexture() {
-      return new Promise((resolve, reject) => {
-        const img = new Image();
-        img.crossOrigin = "anonymous";
-        img.onload = () => {
-          const SIZE = 512;
-          const c = document.createElement("canvas");
-          c.width = SIZE; c.height = SIZE;
-          const ctx = c.getContext("2d");
-          ctx.drawImage(img, 0, 0, SIZE, SIZE);
-          resolve({ ctx, data: ctx.getImageData(0, 0, SIZE, SIZE).data, size: SIZE });
-        };
-        img.onerror = reject;
-        img.src = GUAC_IMG_URL;
-      });
-    }
+    // Generate a procedural guacamole texture — completely different every time
+    function generateGuacTexture(w, h) {
+      const canvas = document.createElement("canvas");
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext("2d");
+      const img = ctx.createImageData(w, h);
+      const d = img.data;
 
-    // Get average RGB of a region in a pixel data array
-    function avgColor(data, x, y, cellW, cellH, imgW) {
-      let r=0, g=0, b=0, n=0;
-      for (let dy = 0; dy < cellH; dy++) {
-        for (let dx = 0; dx < cellW; dx++) {
-          const i = ((y+dy)*imgW+(x+dx))*4;
-          r+=data[i]; g+=data[i+1]; b+=data[i+2]; n++;
-        }
-      }
-      return [r/n, g/n, b/n];
-    }
-
-    // Color distance squared
-    function colorDist(a, b) {
-      return (a[0]-b[0])**2 + (a[1]-b[1])**2 + (a[2]-b[2])**2;
-    }
-
-    // The main effect: divide source into grid cells, replace each cell
-    // with the best-matching guac texture cell, then blend+posterize
-    async function applyGuacEffect(ctx, w, h, setStatus) {
-      setStatus("Loading guac texture...");
-      const guac = await loadGuacTexture();
-
-      setStatus("Analyzing cells...");
-      const srcData = ctx.getImageData(0, 0, w, h).data;
-
-      const GRID = 48; // NxN grid of cells
-      const cellW = Math.floor(w / GRID);
-      const cellH = Math.floor(h / GRID);
-      const guacCellW = Math.floor(guac.size / GRID);
-      const guacCellH = Math.floor(guac.size / GRID);
-
-      // Precompute avg color of every guac cell
-      const guacCells = [];
-      for (let gy = 0; gy < GRID; gy++) {
-        for (let gx = 0; gx < GRID; gx++) {
-          guacCells.push({
-            gx, gy,
-            avg: avgColor(guac.data, gx*guacCellW, gy*guacCellH, guacCellW, guacCellH, guac.size)
-          });
-        }
-      }
-
-      setStatus("Guacamolifying...");
-
-      // For each source cell, find the best-matching guac cell and copy its pixels
-      const outCanvas = document.createElement("canvas");
-      outCanvas.width = w; outCanvas.height = h;
-      const outCtx = outCanvas.getContext("2d");
-
-      // Draw original first as base
-      outCtx.drawImage(ctx.canvas, 0, 0);
-
-      for (let sy = 0; sy < GRID; sy++) {
-        for (let sx = 0; sx < GRID; sx++) {
-          const srcAvg = avgColor(srcData, sx*cellW, sy*cellH, cellW, cellH, w);
-
-          // Find closest guac cell by color distance
-          let best = guacCells[0], bestDist = Infinity;
-          for (const gc of guacCells) {
-            const d = colorDist(srcAvg, gc.avg);
-            if (d < bestDist) { bestDist = d; best = gc; }
-          }
-
-          // Copy that guac cell's pixels into output at source position
-          const guacPatch = guac.ctx.getImageData(
-            best.gx * guacCellW, best.gy * guacCellH, guacCellW, guacCellH
-          );
-
-          // Scale guac patch to cell size and draw
-          const patchCanvas = document.createElement("canvas");
-          patchCanvas.width = guacCellW; patchCanvas.height = guacCellH;
-          patchCanvas.getContext("2d").putImageData(guacPatch, 0, 0);
-          outCtx.drawImage(patchCanvas, sx*cellW, sy*cellH, cellW, cellH);
-        }
-      }
-
-      // No blend — we want pure guac pixels, structure comes from cell matching
-
-      // Step 3: Posterize to 4 guac colors for the iconic poster look
-      const final = outCtx.getImageData(0, 0, w, h);
-      const fd = final.data;
-      const PALETTE = [
-        [22,  38,  5 ],
-        [68,  90,  12],
-        [130, 165, 28],
-        [200, 230, 65],
+      // Guac color palette: dark olive to bright lime
+      const guacColors = [
+        [20, 35, 5],   // nearly black olive
+        [45, 65, 8],   // very dark green
+        [72, 95, 15],  // dark avocado
+        [95, 125, 20], // medium avocado
+        [130, 165, 30],// classic guac
+        [160, 200, 40],// bright guac
+        [185, 220, 55],// light guac
+        [210, 235, 75],// lime highlight
+        [55, 40, 10],  // brown pit chunk
+        [80, 55, 12],  // darker brown
+        [110, 80, 18], // medium brown
+        [35, 28, 6],   // very dark brown
       ];
-      for (let i = 0; i < fd.length; i += 4) {
-        // Boost contrast first
-        let lum = fd[i]*0.299 + fd[i+1]*0.587 + fd[i+2]*0.114;
-        // Floyd-Steinberg dithering: add quantization error to neighbors
-        const band = lum < 64 ? 0 : lum < 128 ? 1 : lum < 192 ? 2 : 3;
-        const err = lum - (band === 0 ? 30 : band === 1 ? 85 : band === 2 ? 150 : 215);
 
-        fd[i]   = PALETTE[band][0];
-        fd[i+1] = PALETTE[band][1];
-        fd[i+2] = PALETTE[band][2];
+      // Fill with layered noise — Perlin-like using sin/cos harmonics
+      const seed1 = Math.random() * 1000;
+      const seed2 = Math.random() * 1000;
+      const seed3 = Math.random() * 1000;
+      const freq1 = 0.015 + Math.random() * 0.02;
+      const freq2 = 0.04  + Math.random() * 0.03;
+      const freq3 = 0.08  + Math.random() * 0.05;
+
+      for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+          // Multi-octave noise using trig (no perlin needed)
+          const n =
+            Math.sin((x + seed1) * freq1) * Math.cos((y + seed1) * freq1) * 0.5 +
+            Math.sin((x + seed2) * freq2 + y * 0.01) * Math.cos((y + seed2) * freq2) * 0.3 +
+            Math.sin((x + seed3) * freq3) * Math.sin((y + seed3) * freq3 + x * 0.01) * 0.2;
+
+          // Normalize to 0-1
+          const t = (n + 1) / 2;
+
+          // Map to color index
+          const ci = Math.floor(t * (guacColors.length - 1));
+          const frac = t * (guacColors.length - 1) - ci;
+          const c0 = guacColors[ci];
+          const c1 = guacColors[Math.min(ci + 1, guacColors.length - 1)];
+
+          const i = (y * w + x) * 4;
+          d[i]   = Math.round(c0[0] + (c1[0] - c0[0]) * frac);
+          d[i+1] = Math.round(c0[1] + (c1[1] - c0[1]) * frac);
+          d[i+2] = Math.round(c0[2] + (c1[2] - c0[2]) * frac);
+          d[i+3] = 255;
+        }
       }
-      outCtx.putImageData(final, 0, 0);
 
-      // Copy result back to original canvas
-      ctx.clearRect(0, 0, w, h);
-      ctx.drawImage(outCanvas, 0, 0);
+      // Paint random brown pit blobs
+      const numBlobs = 40 + Math.floor(Math.random() * 60);
+      for (let b = 0; b < numBlobs; b++) {
+        const bx = Math.floor(Math.random() * w);
+        const by = Math.floor(Math.random() * h);
+        const br = 4 + Math.floor(Math.random() * 18);
+        const bColor = guacColors[8 + Math.floor(Math.random() * 4)]; // brown range
+        for (let dy = -br; dy <= br; dy++) {
+          for (let dx = -br; dx <= br; dx++) {
+            if (dx*dx + dy*dy > br*br) continue;
+            const px = bx+dx, py = by+dy;
+            if (px < 0 || px >= w || py < 0 || py >= h) continue;
+            const dist = Math.sqrt(dx*dx+dy*dy) / br;
+            const blend = Math.max(0, 1 - dist * 1.5); // soft edge
+            const i = (py*w+px)*4;
+            d[i]   = Math.round(d[i]   * (1-blend) + bColor[0] * blend);
+            d[i+1] = Math.round(d[i+1] * (1-blend) + bColor[1] * blend);
+            d[i+2] = Math.round(d[i+2] * (1-blend) + bColor[2] * blend);
+          }
+        }
+      }
+
+      // Paint bright lime highlight streaks
+      const numStreaks = 20 + Math.floor(Math.random() * 30);
+      for (let s = 0; s < numStreaks; s++) {
+        const sx = Math.floor(Math.random() * w);
+        const sy = Math.floor(Math.random() * h);
+        const sr = 2 + Math.floor(Math.random() * 8);
+        const sColor = [200 + Math.floor(Math.random()*30), 225 + Math.floor(Math.random()*10), 50 + Math.floor(Math.random()*30)];
+        for (let dy = -sr; dy <= sr; dy++) {
+          for (let dx = -sr; dx <= sr; dx++) {
+            if (dx*dx + dy*dy > sr*sr) continue;
+            const px = sx+dx, py = sy+dy;
+            if (px < 0 || px >= w || py < 0 || py >= h) continue;
+            const blend = 0.5;
+            const i = (py*w+px)*4;
+            d[i]   = Math.round(d[i]   * (1-blend) + sColor[0] * blend);
+            d[i+1] = Math.round(d[i+1] * (1-blend) + sColor[1] * blend);
+            d[i+2] = Math.round(d[i+2] * (1-blend) + sColor[2] * blend);
+          }
+        }
+      }
+
+      ctx.putImageData(img, 0, 0);
+      return d;
+    }
+
+    // THE CORE ALGORITHM
+    // 1. Get luminance of every source pixel
+    // 2. Generate unique guac texture
+    // 3. Sort source pixel indices by luminance
+    // 4. Sort guac pixel indices by luminance
+    // 5. Map source[rank] -> guac[rank] (1:1 luminance match)
+    // 6. Place guac pixel back at original source position
+    // Result: image structure preserved, every pixel is a real guac pixel
+    function applyGuacPixelRemap(ctx, w, h, setStatus) {
+      setStatus("Generating guac texture...");
+      const src = ctx.getImageData(0, 0, w, h);
+      const sd = src.data;
+      const total = w * h;
+
+      // Generate unique guac texture same size as source
+      const guacData = generateGuacTexture(w, h);
+
+      setStatus("Sorting pixels by luminance...");
+
+      // Compute luminance for every source pixel
+      const srcLums = new Float32Array(total);
+      for (let i = 0; i < total; i++) {
+        srcLums[i] = sd[i*4]*0.299 + sd[i*4+1]*0.587 + sd[i*4+2]*0.114;
+      }
+
+      // Compute luminance for every guac pixel
+      const guacLums = new Float32Array(total);
+      for (let i = 0; i < total; i++) {
+        guacLums[i] = guacData[i*4]*0.299 + guacData[i*4+1]*0.587 + guacData[i*4+2]*0.114;
+      }
+
+      // Sort indices by luminance
+      const srcOrder  = Array.from({length: total}, (_, i) => i).sort((a, b) => srcLums[a]  - srcLums[b]);
+      const guacOrder = Array.from({length: total}, (_, i) => i).sort((a, b) => guacLums[a] - guacLums[b]);
+
+      setStatus("Remapping pixels...");
+
+      // Build output: for each rank, put guac pixel at the source pixel's position
+      const out = ctx.createImageData(w, h);
+      const od = out.data;
+
+      for (let rank = 0; rank < total; rank++) {
+        const srcPos  = srcOrder[rank];   // where this pixel lives in the source
+        const guacPos = guacOrder[rank];  // guac pixel with same luminance rank
+
+        od[srcPos*4]   = guacData[guacPos*4];
+        od[srcPos*4+1] = guacData[guacPos*4+1];
+        od[srcPos*4+2] = guacData[guacPos*4+2];
+        od[srcPos*4+3] = 255;
+      }
+
+      ctx.putImageData(out, 0, 0);
     }
 
     function App() {
@@ -222,7 +248,6 @@ Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start 
         setLoading(true);
         setRecipe(null);
         setProcessedSrc(null);
-        setStatus("Reading image...");
 
         const reader = new FileReader();
         reader.onload = async (ev) => {
@@ -234,31 +259,26 @@ Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start 
           const img = new Image();
           img.onload = async () => {
             const canvas = canvasRef.current;
-            // Cap size for performance
             const MAX = 600;
             const scale = Math.min(1, MAX / Math.max(img.width, img.height));
-            canvas.width = Math.round(img.width * scale);
+            canvas.width  = Math.round(img.width  * scale);
             canvas.height = Math.round(img.height * scale);
             const ctx = canvas.getContext("2d");
             ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
 
-            // Describe image
+            // Describe image for recipe
             setStatus("Analyzing image...");
             let desc = "an unidentified object";
             try { desc = await describeImage(base64, mime); } catch(e) { console.warn("Vision:", e.message); }
 
-            // Apply effect
-            try {
-              await applyGuacEffect(ctx, canvas.width, canvas.height, setStatus);
-            } catch(e) {
-              console.error("Effect failed:", e);
-            }
+            // THE REMAP
+            applyGuacPixelRemap(ctx, canvas.width, canvas.height, setStatus);
             setProcessedSrc(canvas.toDataURL());
 
             // Generate recipe
             setStatus("Generating recipe...");
             try {
-              const r = await generateRecipe(file.name, desc);
+              const r = await generateRecipe(desc);
               setRecipe(r);
             } catch(e) {
               console.error(e);
@@ -294,7 +314,6 @@ Be absurd, specific, funny. You MUST respond with ONLY a raw JSON object. Start 
         ol: { paddingLeft: 22, color: "#333", lineHeight: 2 },
         li: { marginBottom: 10 },
         warn: { marginTop: 24, paddingTop: 18, borderTop: "1px solid #eee", color: "#888", fontSize: 14 },
-        status: { textAlign: "center", color: "#558b2f", fontStyle: "italic", marginBottom: 20, fontSize: 16 }
       };
 
       return (
